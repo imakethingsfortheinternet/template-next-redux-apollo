@@ -1,0 +1,130 @@
+version: '2.1'
+
+networks:
+  test:
+    external: false
+
+services:
+
+  # This file is for the continunous integration testing process.
+  # It is meant to start with a freshly cloned repository.
+  # It will start with a minimum linux image running node,
+  # install package managers, and dependencies, run tests, and in
+  # the end, leave us with a minimal production ready docker container
+  # that can be run in our cluster.
+
+  clean:
+    image: node:8-alpine
+    volumes:
+      - .:/usr/src/service/
+    working_dir: /usr/src/service/
+    command: ash -c "rm -rf node_modules && rm -rf coverage && rm -rf dist"
+
+  npmClean:
+    image: node:8-alpine
+    volumes:
+      - .:/usr/src/service/
+    working_dir: /usr/src/service/
+    command: ash -c "rm -rf node_modules"  
+  
+  installAnalyzer:
+    image: node:8-alpine
+    volumes:
+      - .:/usr/src/service/
+    working_dir: /usr/src/service/
+    command: ash -c "npm install webpack-bundle-analyzer --save"  
+
+  version:
+    image: node:8-alpine
+    volumes:
+      - .:/usr/src/service/
+    working_dir: /usr/src/service/
+    command: ash -c "node -p \"require('./package.json').version.replace('\n', '')\""
+
+  # output: node_modules/ with all dependencies
+  devDeps:
+    image: node:8-alpine
+    volumes:
+      - .:/usr/src/service/
+    environment:
+      - NPM_TOKEN=${NPM_TOKEN:-xxxx}
+      - GH_TOKEN=${GH_TOKEN:-xxxx}
+      - CI=true
+      - JENKINS_URL
+      - GIT_BRANCH
+      - SNYK_TOKEN=${SNYK_TOKEN:-xxxx}
+    working_dir: /usr/src/service/
+    command: ash -c "npm i"
+
+  lint:
+    extends:
+      service: devDeps
+    command: ash -c "npm run lint"
+
+  unit-tests:
+    extends:
+      service: devDeps
+    command: ash -c "npm run test"
+
+  codecov:
+    extends:
+      service: devDeps
+    environment: 
+      - CODECOV_TOKEN=${CODECOV_TOKEN}
+      - BRANCH_NAME=${BRANCH_NAME:-dev}
+    command: ash -c "npm run codecov"
+
+  # output: dist/
+  build:
+    extends:
+      service: unit-tests
+    command: ash -c "npm run build"
+
+  # also deleting unneeded cache for minimal build size
+  deps:
+    extends:
+      service: devDeps
+    command: ash -c "npm i --only=production"
+
+  semantic-release-pre:
+    extends:
+      service: devDeps
+    command: ash -c "npm run semantic-release:pre"
+
+  semantic-release-release:
+    extends:
+      service: devDeps
+    command: ash -c "npm run semantic-release:release"
+
+  semantic-release-post:
+    extends:
+      service: devDeps
+    command: ash -c "npm run semantic-release:post"
+
+  # The current directory contains /dist, and /node_modules with only production dependencies
+  staging-deps:
+    image: graphql
+    environment:
+      - NODE_ENV=staging
+      - LOCALDB
+    networks:
+      - test
+
+  # reinstall dev deps to get testing tools and run staging tests
+  staging:
+    extends:
+      service: deps
+    networks:
+      - test
+    environment:
+      - NODE_ENV=staging
+      - graphqlURL=http://staging-deps:3010
+    command: ash -c "npm run test:staging"
+
+  production:
+    extends: 
+      service: devDeps
+    environment: 
+      - NODE_ENV=${NODE_ENV:-production}
+      - graphqlURL=${graphqlURL:-http://localhost:3010}
+    command: ash -c "npm run test:staging"

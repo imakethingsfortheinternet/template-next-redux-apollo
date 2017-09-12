@@ -1,0 +1,21 @@
+version: '3.2'
+
+networks:
+  service:
+
+services:
+
+  dddmicroservices-webinar:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - 3000:3000
+    volumes:
+      - .:/home/service/
+      - /home/service/node_modules
+    environment:
+      - NODE_ENV=development
+      - port=3000
+    networks:
+      - service
